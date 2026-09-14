@@ -1,0 +1,4 @@
+module CTDLib [system] {
+  header "shim.h"
+  export *
+}

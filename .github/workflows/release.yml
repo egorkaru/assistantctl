@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    strategy:
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+          - architecture: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static build dependencies
+        run: brew install tdlib openssl@3
+      - name: Verify Swift toolchain
+        run: swift --version
+      - name: Run tests
+        run: swift test
+      - name: Build native release slice
+        run: bash scripts/build-static.sh
+      - name: Verify native executable
+        run: |
+          file .build/release/assistantctl | grep '${{ matrix.architecture }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assistantctl-${{ matrix.architecture }}
+          path: .build/release/assistantctl
+
+  publish:
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: assistantctl-arm64
+          path: slices/arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: assistantctl-x86_64
+          path: slices/x86_64
+      - name: Create universal archive and checksum
+        run: |
+          lipo -create \
+            slices/arm64/assistantctl \
+            slices/x86_64/assistantctl \
+            -output assistantctl
+          chmod +x assistantctl
+          codesign --force --sign - assistantctl
+          lipo -archs assistantctl | grep arm64
+          lipo -archs assistantctl | grep x86_64
+          dependencies="$(otool -L assistantctl)"
+          if echo "$dependencies" | grep -E 'tdjson|libssl|libcrypto|/opt/homebrew/|/usr/local/(Cellar|opt)/'; then
+            echo 'Universal executable still depends on Homebrew libraries' >&2
+            exit 1
+          fi
+          ./assistantctl --help >/dev/null
+          ./assistantctl sources >/dev/null
+          python3 Tests/mcp_smoke.py ./assistantctl
+          tar -czf assistantctl-macos-universal.tar.gz assistantctl
+          shasum -a 256 assistantctl-macos-universal.tar.gz \
+            > assistantctl-macos-universal.tar.gz.sha256
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            assistantctl-macos-universal.tar.gz \
+            assistantctl-macos-universal.tar.gz.sha256 \
+            --generate-notes

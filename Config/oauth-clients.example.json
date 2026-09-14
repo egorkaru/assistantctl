@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "gmail": {
+    "clientId": "example.apps.googleusercontent.com",
+    "clientSecret": "desktop-client-value"
+  },
+  "microsoft": {
+    "clientId": "00000000-0000-0000-0000-000000000000",
+    "tenant": "common"
+  }
+}

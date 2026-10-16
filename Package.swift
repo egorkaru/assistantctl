@@ -4,6 +4,10 @@ import PackageDescription
 import Foundation
 
 let useStaticTDLib = ProcessInfo.processInfo.environment["ASSISTANTCTL_STATIC_TDLIB"] == "1"
+let environment = ProcessInfo.processInfo.environment
+let quietTDLib = environment["ASSISTANTCTL_QUIET_TDLIB"] != nil
+let quietGmail = environment["ASSISTANTCTL_QUIET_GMAIL"] != nil
+let quietMicrosoft = environment["ASSISTANTCTL_QUIET_MICROSOFT"] != nil
 
 let package = Package(
   name: "AssistantCtl",
@@ -55,6 +59,8 @@ let package = Package(
     .target(
       name: "AssistantOAuth",
       dependencies: ["AssistantSecurity"],
+      swiftSettings: (quietGmail ? [.define("ASSISTANTCTL_QUIET_GMAIL")] : [])
+        + (quietMicrosoft ? [.define("ASSISTANTCTL_QUIET_MICROSOFT")] : []),
       linkerSettings: [.linkedFramework("AppKit")],
       plugins: ["OAuthConfigPlugin"]
     ),
@@ -65,11 +71,14 @@ let package = Package(
     .target(
       name: "TelegramConnector",
       dependencies: ["AssistantJSON", "AssistantMessages", "CTDLib"],
+      swiftSettings: quietTDLib ? [.define("ASSISTANTCTL_QUIET_TDLIB")] : [],
       plugins: ["TelegramConfigPlugin"]
     ),
     .target(
       name: "EmailConnector",
-      dependencies: ["AssistantMessages", "AssistantOAuth"]
+      dependencies: ["AssistantMessages", "AssistantOAuth"],
+      swiftSettings: (quietGmail ? [.define("ASSISTANTCTL_QUIET_GMAIL")] : [])
+        + (quietMicrosoft ? [.define("ASSISTANTCTL_QUIET_MICROSOFT")] : [])
     ),
     .executableTarget(
       name: "AssistantCLI",
@@ -86,7 +95,8 @@ let package = Package(
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
-      ]
+      ],
+      linkerSettings: [.linkedFramework("CoreImage")]
     ),
     .testTarget(
       name: "AssistantMessagesTests",
@@ -125,6 +135,11 @@ let package = Package(
         "AssistantStorage",
         "EmailConnector",
       ]
+    ),
+    .testTarget(
+      name: "AssistantCLITests",
+      dependencies: ["AssistantCLI"],
+      linkerSettings: [.linkedFramework("Vision")]
     ),
     .executableTarget(
       name: "OAuthConfigGenerator",

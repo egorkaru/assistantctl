@@ -6,6 +6,40 @@ import Testing
 
 @Suite("Read-only email connectors")
 struct EmailConnectorTests {
+  @Test("Gmail HTTP errors follow the Gmail build flag")
+  func gmailErrorBody() async throws {
+    let connector = GmailMessageConnector(
+      accessToken: "test-token",
+      client: RejectedHTTPClient(),
+      baseURL: URL(string: "https://example.test/gmail")!
+    )
+    do {
+      _ = try await connector.messages(in: "gmail:inbox", cursor: nil, limit: 1)
+      Issue.record("Expected Gmail HTTP error")
+    } catch {
+      #expect(error.localizedDescription.contains("HTTP 403"))
+      #expect(error.localizedDescription.contains("provider-secret")
+        == (ProcessInfo.processInfo.environment["ASSISTANTCTL_QUIET_GMAIL"] == nil))
+    }
+  }
+
+  @Test("Microsoft HTTP errors follow the Microsoft build flag")
+  func microsoftErrorBody() async throws {
+    let connector = MicrosoftMailConnector(
+      accessToken: "test-token",
+      client: RejectedHTTPClient(),
+      baseURL: URL(string: "https://example.test/me")!
+    )
+    do {
+      _ = try await connector.messages(in: "microsoft:inbox", cursor: nil, limit: 1)
+      Issue.record("Expected Microsoft HTTP error")
+    } catch {
+      #expect(error.localizedDescription.contains("HTTP 403"))
+      #expect(error.localizedDescription.contains("provider-secret")
+        == (ProcessInfo.processInfo.environment["ASSISTANTCTL_QUIET_MICROSOFT"] == nil))
+    }
+  }
+
   @Test("Gmail maps list and full-message responses")
   func gmailMapsMessages() async throws {
     let client = StubHTTPClient(responses: [
@@ -93,6 +127,15 @@ struct EmailConnectorTests {
     #expect(page.messages.isEmpty)
     #expect(await tokens.forcedRefreshCount() == 1)
     #expect(await client.authorizationHeaders() == ["Bearer expired", "Bearer fresh"])
+  }
+}
+
+private struct RejectedHTTPClient: HTTPDataClient {
+  func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    (
+      Data("provider-secret".utf8),
+      HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: nil)!
+    )
   }
 }
 

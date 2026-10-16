@@ -4,7 +4,6 @@ public enum TelegramRequestPolicy {
   private static let allowedTypes: Set<String> = [
     "checkAuthenticationCode",
     "checkAuthenticationPassword",
-    "checkDatabaseEncryptionKey",
     "close",
     "getAuthorizationState",
     "getChat",
@@ -12,6 +11,8 @@ public enum TelegramRequestPolicy {
     "getChats",
     "getMessage",
     "getUser",
+    "requestQrCodeAuthentication",
+    "resendAuthenticationCode",
     "searchChatMessages",
     "setAuthenticationPhoneNumber",
     "setTdlibParameters",

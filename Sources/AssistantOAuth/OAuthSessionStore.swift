@@ -21,11 +21,38 @@ public actor KeychainOAuthSessionStore: OAuthSessionStoring {
   public func session(for provider: OAuthProvider) throws -> OAuthTokenSet? {
     guard let value = try secrets.value(for: key(for: provider)) else { return nil }
     guard let data = value.data(using: .utf8) else { throw SecretStoreError.invalidData }
-    return try decoder.decode(OAuthTokenSet.self, from: data)
+    let stored = try decoder.decode(StoredOAuthSession.self, from: data)
+    let embeddedConfiguration = stored.configurationSource == .embedded
+      ? try? OAuthConfigurationLoader(environment: [:]).loadProvider(provider, explicitPath: nil).0
+      : nil
+    guard let clientConfiguration = embeddedConfiguration ?? stored.clientConfiguration else {
+      throw OAuthError.missingConfiguration(provider)
+    }
+    let session = OAuthTokenSet(
+      provider: stored.provider,
+      accessToken: stored.accessToken,
+      refreshToken: stored.refreshToken,
+      expiresAt: stored.expiresAt,
+      clientConfiguration: clientConfiguration,
+      configurationSource: stored.configurationSource
+    )
+    if embeddedConfiguration != nil, stored.clientConfiguration != nil {
+      try save(session)
+    }
+    return session
   }
 
   public func save(_ session: OAuthTokenSet) throws {
-    let data = try encoder.encode(session)
+    let stored = StoredOAuthSession(
+      provider: session.provider,
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      expiresAt: session.expiresAt,
+      clientConfiguration: session.configurationSource == .embedded
+        ? nil : session.clientConfiguration,
+      configurationSource: session.configurationSource
+    )
+    let data = try encoder.encode(stored)
     guard let value = String(data: data, encoding: .utf8) else {
       throw SecretStoreError.invalidData
     }
@@ -39,4 +66,13 @@ public actor KeychainOAuthSessionStore: OAuthSessionStoring {
   private func key(for provider: OAuthProvider) -> String {
     "oauth.\(provider.rawValue).session-v1"
   }
+}
+
+struct StoredOAuthSession: Codable {
+  let provider: OAuthProvider
+  let accessToken: String
+  let refreshToken: String?
+  let expiresAt: Date
+  let clientConfiguration: OAuthProviderClientConfiguration?
+  let configurationSource: OAuthConfigurationSource
 }

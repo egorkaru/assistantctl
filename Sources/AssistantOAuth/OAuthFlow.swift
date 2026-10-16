@@ -139,7 +139,11 @@ public struct OAuthLoginService: Sendable {
     try await browser.open(authorization.url)
     let callback = try await server.waitForCallback(timeout: .seconds(300))
     if let error = callback.error {
-      throw OAuthError.authorizationDenied(callback.errorDescription ?? error)
+      let detail = visibleProviderError(
+        callback.errorDescription ?? error,
+        provider: provider
+      ) ?? "consent was not granted"
+      throw OAuthError.authorizationDenied(detail)
     }
     guard callback.state == authorization.state else {
       throw OAuthError.callbackStateMismatch

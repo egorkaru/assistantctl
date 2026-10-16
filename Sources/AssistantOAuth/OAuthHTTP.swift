@@ -58,6 +58,7 @@ enum OAuthTokenEndpoint {
       fields.append(("scope", OAuthProviderMetadata.scopes(for: provider).joined(separator: " ")))
     }
     return try await request(
+      provider: provider,
       endpoint: OAuthProviderMetadata.tokenEndpoint(
         for: provider,
         client: clientConfiguration
@@ -85,6 +86,7 @@ enum OAuthTokenEndpoint {
       )
     }
     return try await request(
+      provider: session.provider,
       endpoint: OAuthProviderMetadata.tokenEndpoint(
         for: session.provider,
         client: session.clientConfiguration
@@ -106,6 +108,7 @@ enum OAuthTokenEndpoint {
   }
 
   private static func request(
+    provider: OAuthProvider,
     endpoint: URL,
     fields: [(String, String)],
     httpClient: any OAuthHTTPClient
@@ -122,7 +125,10 @@ enum OAuthTokenEndpoint {
     let (data, response) = try await httpClient.data(for: request)
     guard (200..<300).contains(response.statusCode) else {
       let endpointError = try? JSONDecoder().decode(OAuthEndpointError.self, from: data)
-      let description = endpointError?.errorDescription ?? endpointError?.error ?? "request failed"
+      let providerDescription = endpointError?.errorDescription ?? endpointError?.error
+      let description = providerDescription.flatMap {
+        visibleProviderError($0, provider: provider)
+      } ?? "request failed"
       throw OAuthError.tokenRequestFailed(status: response.statusCode, description: description)
     }
     do {
@@ -136,5 +142,22 @@ enum OAuthTokenEndpoint {
     var components = URLComponents()
     components.queryItems = fields.map { URLQueryItem(name: $0.0, value: $0.1) }
     return components.percentEncodedQuery ?? ""
+  }
+}
+
+func visibleProviderError(_ detail: String, provider: OAuthProvider) -> String? {
+  switch provider {
+  case .gmail:
+    #if ASSISTANTCTL_QUIET_GMAIL
+    return nil
+    #else
+    return detail
+    #endif
+  case .microsoft:
+    #if ASSISTANTCTL_QUIET_MICROSOFT
+    return nil
+    #else
+    return detail
+    #endif
   }
 }

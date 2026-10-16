@@ -24,7 +24,7 @@ assistantctl messages list --source gmail --limit 25
 assistantctl messages get 'gmail:MESSAGE_ID'
 ```
 
-Telegram uses `assistantctl telegram login --api-id ID --api-hash HASH --phone NUMBER`. Microsoft Mail uses `assistantctl email microsoft login --oauth-config PATH`.
+Telegram supports phone login with `assistantctl telegram login --api-id ID --api-hash HASH --phone NUMBER` or QR login with `assistantctl telegram login --api-id ID --api-hash HASH --qr`. Microsoft Mail uses `assistantctl email microsoft login --oauth-config PATH`.
 
 ## MCP
 

@@ -16,7 +16,7 @@ Use an existing directory in your `PATH` if `/usr/local/bin` is unavailable.
 ## Build from source
 
 ```sh
-brew install tdlib
+brew install --HEAD tdlib
 swift build -c release --disable-build-manifest-caching
 swift test
 .build/release/assistantctl --help
@@ -25,11 +25,19 @@ swift test
 To build the same statically linked executable used by CI, run:
 
 ```sh
-brew install tdlib openssl@3
+brew install --HEAD tdlib
 bash scripts/build-static.sh
 .build/release/assistantctl --help
 ```
 
-The script links TDLib and OpenSSL static archives into `.build/release/assistantctl`, checks its dynamic dependencies, and starts it. OAuth client configuration is supplied by each user at login. A private source build may embed a Telegram API ID and hash from `.assistantctl-private/telegram-app.json`; public release builds contain no Telegram app credentials. Neither configuration is required to build. See [provider setup](providers.md).
+If Homebrew reports that stable `tdlib` is already installed, run `brew unlink tdlib` and then `brew install --HEAD tdlib`. The script links the Homebrew TDLib and its OpenSSL dependency statically into `.build/release/assistantctl`, checks dynamic dependencies, and starts the executable. OAuth client configuration is supplied by each user at login. A private source build may embed a Telegram API ID and hash from `.assistantctl-private/telegram-app.json`; public release builds contain no Telegram app credentials. Neither configuration is required to build. See [provider setup](providers.md).
+
+The build script sets `ASSISTANTCTL_QUIET_TDLIB`, `ASSISTANTCTL_QUIET_GMAIL`, and `ASSISTANTCTL_QUIET_MICROSOFT` when `LOGS` is unset, including for public release builds. Set `LOGS` to any value to build with TDLib's native logs and provider response details:
+
+```sh
+LOGS=1 bash scripts/build-static.sh
+```
+
+`LOGS` is read only by the build script. The three provider variables are read by `Package.swift` and can be set separately for a source build. Without `LOGS`, Gmail and Microsoft errors retain HTTP status and setup guidance but omit provider-supplied response text. Native TDLib logs can include credentials and message data; keep diagnostic builds local and do not share their output. Changing these variables when running an already built binary has no effect.
 
 If `swift test` cannot locate the `Testing` framework on a Command Line Tools-only Mac, use the [alternate test command](testing.md#command-line-tools-testing).

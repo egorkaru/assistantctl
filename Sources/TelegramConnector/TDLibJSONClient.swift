@@ -2,13 +2,28 @@ import AssistantJSON
 import CTDLib
 import Foundation
 
-actor TDLibJSONClient {
+protocol TelegramClient: Sendable {
+  func request(type: String, fields: [String: JSONValue]) async throws -> Data
+  func updates() async -> AsyncThrowingStream<Data, any Error>
+  func close() async
+}
+
+extension TelegramClient {
+  func request(type: String) async throws -> Data {
+    try await request(type: type, fields: [:])
+  }
+}
+
+actor TDLibJSONClient: TelegramClient {
   private let clientID: Int32
   private var pending: [String: CheckedContinuation<Data, any Error>] = [:]
   private var updateContinuations: [UUID: AsyncThrowingStream<Data, any Error>.Continuation] = [:]
   private var receiverTask: Task<Void, Never>?
 
   init() {
+    #if ASSISTANTCTL_QUIET_TDLIB
+    _ = td_execute(#"{"@type":"setLogVerbosityLevel","new_verbosity_level":0}"#)
+    #endif
     clientID = td_create_client_id()
   }
 
@@ -52,6 +67,27 @@ actor TDLibJSONClient {
         Task { await self.removeUpdateContinuation(id: id) }
       }
     }
+  }
+
+  func close() async {
+    let stream = updates()
+    do {
+      _ = try await request(type: "close")
+      for try await data in stream {
+        guard
+          let object = try? TelegramMessageMapper.jsonObject(from: data),
+          object["@type"] as? String == "updateAuthorizationState",
+          let state = object["authorization_state"] as? [String: Any],
+          state["@type"] as? String == "authorizationStateClosed"
+        else { continue }
+        break
+      }
+    } catch {
+      // A failed close request leaves no state transition to wait for.
+    }
+    receiverTask?.cancel()
+    await receiverTask?.value
+    receiverTask = nil
   }
 
   private func startReceiverIfNeeded() {

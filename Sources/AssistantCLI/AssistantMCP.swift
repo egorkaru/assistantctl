@@ -56,7 +56,8 @@ extension MCPCommands {
 
 private func makeMCPServer() async -> Server {
   let operations = MCPOperations()
-  let server = Server(name: "assistantctl", version: "0.1.0", capabilities: .init(tools: .init()))
+  let server = Server(
+    name: "assistantctl", version: AssistantVersion.current, capabilities: .init(tools: .init()))
   await server.withMethodHandler(ListTools.self) { _ in
     ListTools.Result(tools: MCPOperations.tools)
   }
@@ -136,8 +137,7 @@ private actor MCPOperations {
       let provider = try providerID(arguments)
       if provider == "telegram" {
         do {
-          _ = try await authorizedTelegram(apiID: nil, apiHash: nil, phone: nil,
-                                           allowPrompts: false)
+          _ = try await connectedTelegram(apiID: nil, apiHash: nil)
           return ["provider": .string(provider), "connected": true]
         } catch {
           return ["provider": .string(provider), "connected": false,
@@ -147,7 +147,10 @@ private actor MCPOperations {
       let session = try await KeychainOAuthSessionStore().session(
         for: provider == "gmail" ? .gmail : .microsoft
       )
-      return ["provider": .string(provider), "connected": .bool(session != nil)]
+      let tokenKey = provider == "gmail"
+        ? CredentialKey.gmailAccessToken : CredentialKey.microsoftAccessToken
+      let storedToken = try KeychainSecretStore().value(for: tokenKey)
+      return ["provider": .string(provider), "connected": .bool(session != nil || storedToken != nil)]
     case "conversations":
       let connector = try await connector(for: providerID(arguments))
       return ["items": try Value(await connector.conversations())]
@@ -203,8 +206,7 @@ private actor MCPOperations {
   private func connector(for provider: String) async throws -> any MessageConnector {
     switch provider {
     case "telegram":
-      return try await authorizedTelegram(apiID: nil, apiHash: nil, phone: nil,
-                                          allowPrompts: false)
+      return try await connectedTelegram(apiID: nil, apiHash: nil)
     case "gmail": return gmailConnector(accessToken: nil)
     case "microsoft": return microsoftConnector(accessToken: nil)
     default: throw MCPToolError.invalidProvider
@@ -272,8 +274,7 @@ private actor LoginCoordinator {
         if provider == "telegram" {
           let connector = try makeTelegramConnector(
             apiID: arguments["api_id"]?.intValue,
-            apiHash: arguments["api_hash"]?.stringValue,
-            phone: arguments["phone"]?.stringValue
+            apiHash: arguments["api_hash"]?.stringValue
           )
           let phone = try telegramPhone(arguments)
           try await connector.authorize(using: TelegramAuthentication(
@@ -291,6 +292,9 @@ private actor LoginCoordinator {
             provider: oauthProvider, clientConfiguration: configuration,
             configurationSource: source
           )
+          let tokenKey = oauthProvider == .gmail
+            ? CredentialKey.gmailAccessToken : CredentialKey.microsoftAccessToken
+          try KeychainSecretStore().deleteValue(for: tokenKey)
         }
         self.finish(id: id, state: "connected")
       } catch {
@@ -362,9 +366,16 @@ private actor LoginCoordinator {
   }
 
   private func telegramPhone(_ arguments: [String: Value]) throws -> String {
-    if let phone = arguments["phone"]?.stringValue, !phone.isEmpty { return phone }
-    if let phone = ProcessInfo.processInfo.environment["ASSISTANTCTL_TELEGRAM_PHONE"] { return phone }
-    if let phone = try KeychainSecretStore().value(for: CredentialKey.telegramPhone) { return phone }
+    let secrets = KeychainSecretStore()
+    if let phone = arguments["phone"]?.stringValue, !phone.isEmpty {
+      try secrets.set(phone, for: CredentialKey.telegramPhone)
+      return phone
+    }
+    if let phone = ProcessInfo.processInfo.environment["ASSISTANTCTL_TELEGRAM_PHONE"], !phone.isEmpty {
+      try secrets.set(phone, for: CredentialKey.telegramPhone)
+      return phone
+    }
+    if let phone = try secrets.value(for: CredentialKey.telegramPhone), !phone.isEmpty { return phone }
     throw MCPToolError.missing("phone")
   }
 }

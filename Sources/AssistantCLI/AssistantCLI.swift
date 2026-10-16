@@ -104,14 +104,30 @@ struct Telegram: AsyncParsableCommand {
     @Option(name: .long) var apiID: Int?
     @Option(name: .long) var apiHash: String?
     @Option(name: .long) var phone: String?
+    @Flag(name: .long, help: "Log in by scanning a QR code from an authorized Telegram app.")
+    var qr = false
 
     func run() async throws {
-      _ = try await authorizedTelegram(
+      if qr {
+        guard phone == nil else { throw ValidationError("--qr and --phone cannot be used together") }
+        let connector = try makeTelegramConnector(apiID: apiID, apiHash: apiHash)
+        try await connector.authorizeWithQRCode(
+          onLink: { link in
+            writeStatus("Scan the current QR code in an authorized Telegram app:")
+            writeStatus(try renderTelegramQRCode(link))
+          },
+          password: { try prompt("Telegram 2FA password: ") }
+        )
+        await connector.close()
+        writeStatus("Telegram authorization is ready.")
+        return
+      }
+      let connector = try await authorizedTelegram(
         apiID: apiID,
         apiHash: apiHash,
-        phone: phone,
-        allowPrompts: true
+        phone: phone
       )
+      await connector.close()
       writeStatus("Telegram authorization is ready.")
     }
   }
@@ -119,15 +135,9 @@ struct Telegram: AsyncParsableCommand {
   struct Chats: AsyncParsableCommand {
     @Option(name: .long) var apiID: Int?
     @Option(name: .long) var apiHash: String?
-    @Option(name: .long) var phone: String?
 
     func run() async throws {
-      let connector = try await authorizedTelegram(
-        apiID: apiID,
-        apiHash: apiHash,
-        phone: phone,
-        allowPrompts: true
-      )
+      let connector = try await connectedTelegram(apiID: apiID, apiHash: apiHash)
       try await printJSON(connector.conversations())
     }
   }
@@ -135,16 +145,10 @@ struct Telegram: AsyncParsableCommand {
   struct Sync: AsyncParsableCommand {
     @Option(name: .long) var apiID: Int?
     @Option(name: .long) var apiHash: String?
-    @Option(name: .long) var phone: String?
     @Option(name: .long) var limit = 100
 
     func run() async throws {
-      let connector = try await authorizedTelegram(
-        apiID: apiID,
-        apiHash: apiHash,
-        phone: phone,
-        allowPrompts: true
-      )
+      let connector = try await connectedTelegram(apiID: apiID, apiHash: apiHash)
       let result = try await MessageIngestionService(database: openDatabase()).sync(
         connector: connector,
         perConversationLimit: limit
@@ -156,15 +160,9 @@ struct Telegram: AsyncParsableCommand {
   struct Watch: AsyncParsableCommand {
     @Option(name: .long) var apiID: Int?
     @Option(name: .long) var apiHash: String?
-    @Option(name: .long) var phone: String?
 
     func run() async throws {
-      let connector = try await authorizedTelegram(
-        apiID: apiID,
-        apiHash: apiHash,
-        phone: phone,
-        allowPrompts: true
-      )
+      let connector = try await connectedTelegram(apiID: apiID, apiHash: apiHash)
       writeStatus("Watching Telegram; press Control-C to stop.")
       try await MessageIngestionService(database: openDatabase()).watch(connector: connector)
     }
@@ -175,12 +173,9 @@ struct Telegram: AsyncParsableCommand {
     @Option(name: .long) var limit: Int
     @Option(name: .long) var apiID: Int?
     @Option(name: .long) var apiHash: String?
-    @Option(name: .long) var phone: String?
 
     func run() async throws {
-      let connector = try await authorizedTelegram(
-        apiID: apiID, apiHash: apiHash, phone: phone, allowPrompts: true
-      )
+      let connector = try await connectedTelegram(apiID: apiID, apiHash: apiHash)
       let result = try await MessageIngestionService(database: openDatabase()).backfill(
         connector: connector, conversationID: conversation, limit: limit
       )
@@ -222,7 +217,7 @@ struct Email: AsyncParsableCommand {
     }
 
     struct Sync: AsyncParsableCommand {
-      @Option(name: .long, help: "Temporary gmail.readonly access token; not saved.")
+      @Option(name: .long, help: "Gmail access token; saved in Keychain.")
       var accessToken: String?
       @Option(name: .long) var limit = 100
 
@@ -230,7 +225,7 @@ struct Email: AsyncParsableCommand {
     }
 
     struct Watch: AsyncParsableCommand {
-      @Option(name: .long, help: "Temporary gmail.readonly access token; not saved.")
+      @Option(name: .long, help: "Gmail access token; saved in Keychain.")
       var accessToken: String?
 
       func run() async throws { try await watchGmail(accessToken: accessToken) }
@@ -273,7 +268,7 @@ struct Email: AsyncParsableCommand {
     }
 
     struct Sync: AsyncParsableCommand {
-      @Option(name: .long, help: "Temporary delegated Mail.Read token; not saved.")
+      @Option(name: .long, help: "Microsoft access token; saved in Keychain.")
       var accessToken: String?
       @Option(name: .long) var limit = 100
 
@@ -281,7 +276,7 @@ struct Email: AsyncParsableCommand {
     }
 
     struct Watch: AsyncParsableCommand {
-      @Option(name: .long, help: "Temporary delegated Mail.Read token; not saved.")
+      @Option(name: .long, help: "Microsoft access token; saved in Keychain.")
       var accessToken: String?
 
       func run() async throws { try await watchMicrosoft(accessToken: accessToken) }
@@ -309,7 +304,7 @@ struct Email: AsyncParsableCommand {
       abstract: "Deprecated alias for `gmail sync`."
     )
 
-    @Option(name: .long, help: "Temporary gmail.readonly access token; not saved.")
+    @Option(name: .long, help: "Gmail access token; saved in Keychain.")
     var accessToken: String?
     @Option(name: .long) var limit = 100
 
@@ -324,7 +319,7 @@ struct Email: AsyncParsableCommand {
       abstract: "Deprecated alias for `microsoft sync`."
     )
 
-    @Option(name: .long, help: "Temporary delegated Mail.Read token; not saved.")
+    @Option(name: .long, help: "Microsoft access token; saved in Keychain.")
     var accessToken: String?
     @Option(name: .long) var limit = 100
 
@@ -339,7 +334,7 @@ struct Email: AsyncParsableCommand {
       abstract: "Deprecated alias for `gmail watch`."
     )
 
-    @Option(name: .long, help: "Temporary gmail.readonly access token; not saved.")
+    @Option(name: .long, help: "Gmail access token; saved in Keychain.")
     var accessToken: String?
 
     func run() async throws {
@@ -353,7 +348,7 @@ struct Email: AsyncParsableCommand {
       abstract: "Deprecated alias for `microsoft watch`."
     )
 
-    @Option(name: .long, help: "Temporary delegated Mail.Read token; not saved.")
+    @Option(name: .long, help: "Microsoft access token; saved in Keychain.")
     var accessToken: String?
 
     func run() async throws {
@@ -372,25 +367,38 @@ func openDatabase() throws -> MessageDatabase {
 func authorizedTelegram(
   apiID: Int?,
   apiHash: String?,
-  phone: String?,
-  allowPrompts: Bool
+  phone: String?
 ) async throws -> TelegramMessageConnector {
-  let connector = try makeTelegramConnector(apiID: apiID, apiHash: apiHash, phone: phone)
-  let resolvedPhone = try resolve(
+  let connector = try makeTelegramConnector(apiID: apiID, apiHash: apiHash)
+  let resolvedPhone = try resolveOptional(
     supplied: phone, environment: "ASSISTANTCTL_TELEGRAM_PHONE",
     key: CredentialKey.telegramPhone, store: KeychainSecretStore()
-  )
+  ) ?? ""
   try await connector.authorize(
     using: TelegramAuthentication(
       phoneNumber: resolvedPhone,
-      code: { try prompt("Telegram code: ", allowed: allowPrompts) },
-      password: { try prompt("Telegram 2FA password: ", allowed: allowPrompts) }
+      onCodeDelivery: { delivery in
+        writeStatus("Telegram code delivery: \(delivery.method).")
+        if let next = delivery.nextMethod {
+          writeStatus("Next delivery: \(next). Enter /resend if no code arrives; Telegram requires up to \(delivery.timeout) seconds before resending.")
+        } else {
+          writeStatus("Telegram has not offered another delivery method.")
+        }
+      },
+      code: { try prompt("Telegram code: ") },
+      password: { try prompt("Telegram 2FA password: ") }
     )
   )
   return connector
 }
 
-func makeTelegramConnector(apiID: Int?, apiHash: String?, phone: String?) throws -> TelegramMessageConnector {
+func connectedTelegram(apiID: Int?, apiHash: String?) async throws -> TelegramMessageConnector {
+  let connector = try makeTelegramConnector(apiID: apiID, apiHash: apiHash)
+  try await connector.requireAuthorization()
+  return connector
+}
+
+func makeTelegramConnector(apiID: Int?, apiHash: String?) throws -> TelegramMessageConnector {
   let secrets = KeychainSecretStore()
   let externalAPIID = try resolveOptional(
     supplied: apiID.map(String.init),
@@ -408,8 +416,6 @@ func makeTelegramConnector(apiID: Int?, apiHash: String?, phone: String?) throws
     externalAPIID: externalAPIID,
     externalAPIHash: externalAPIHash
   )
-  _ = try resolve(supplied: phone, environment: "ASSISTANTCTL_TELEGRAM_PHONE",
-                  key: CredentialKey.telegramPhone, store: secrets)
   let paths = ApplicationPaths.standard
   try paths.prepare()
   return TelegramMessageConnector(
@@ -434,17 +440,22 @@ private func loginEmail(provider: OAuthProvider, oauthConfig: String?) async thr
     clientConfiguration: configuration,
     configurationSource: source
   )
+  try KeychainSecretStore().deleteValue(for: emailAccessTokenKey(for: provider))
   writeStatus("\(provider.displayName) authorization is ready.")
 }
 
 private func printEmailStatus(provider: OAuthProvider) async throws {
   let session = try await KeychainOAuthSessionStore().session(for: provider)
-  try printJSON(OAuthConnectionStatus(provider: provider, session: session))
+  let hasStoredToken = try KeychainSecretStore().value(for: emailAccessTokenKey(for: provider)) != nil
+  try printJSON(OAuthConnectionStatus(
+    provider: provider, session: session, hasStoredAccessToken: hasStoredToken
+  ))
 }
 
 private func logoutEmail(provider: OAuthProvider) async throws {
   try await KeychainOAuthSessionStore().deleteSession(for: provider)
-  writeStatus("Removed the local \(provider.displayName) OAuth session.")
+  try KeychainSecretStore().deleteValue(for: emailAccessTokenKey(for: provider))
+  writeStatus("Removed the local \(provider.displayName) credentials.")
 }
 
 private func syncGmail(accessToken: String?, limit: Int) async throws {
@@ -493,24 +504,52 @@ private func emailTokenProvider(
   provider: OAuthProvider,
   supplied: String?
 ) -> any AccessTokenProviding {
-  if let supplied, !supplied.isEmpty {
-    return StaticAccessTokenProvider(supplied)
-  }
-  let environment = ProcessInfo.processInfo.environment
-  let currentKey: String
+  let environmentName: String
   switch provider {
   case .gmail:
-    currentKey = "ASSISTANTCTL_GMAIL_ACCESS_TOKEN"
+    environmentName = "ASSISTANTCTL_GMAIL_ACCESS_TOKEN"
   case .microsoft:
-    currentKey = "ASSISTANTCTL_MICROSOFT_ACCESS_TOKEN"
+    environmentName = "ASSISTANTCTL_MICROSOFT_ACCESS_TOKEN"
   }
-  if let token = environment[currentKey], !token.isEmpty {
-    return StaticAccessTokenProvider(token)
-  }
-  return OAuthAccessTokenProvider(
-    provider: provider,
-    sessionStore: KeychainOAuthSessionStore()
+  return EmailAccessTokenProvider(
+    supplied: supplied,
+    environmentToken: ProcessInfo.processInfo.environment[environmentName],
+    key: emailAccessTokenKey(for: provider),
+    oauth: OAuthAccessTokenProvider(
+      provider: provider,
+      sessionStore: KeychainOAuthSessionStore()
+    )
   )
+}
+
+private func emailAccessTokenKey(for provider: OAuthProvider) -> String {
+  switch provider {
+  case .gmail: CredentialKey.gmailAccessToken
+  case .microsoft: CredentialKey.microsoftAccessToken
+  }
+}
+
+private struct EmailAccessTokenProvider: AccessTokenProviding {
+  let supplied: String?
+  let environmentToken: String?
+  let key: String
+  let oauth: OAuthAccessTokenProvider
+  let secrets = KeychainSecretStore()
+
+  func accessToken(forceRefresh: Bool) async throws -> String {
+    if let supplied, !supplied.isEmpty {
+      try secrets.set(supplied, for: key)
+      return supplied
+    }
+    if let environmentToken, !environmentToken.isEmpty {
+      try secrets.set(environmentToken, for: key)
+      return environmentToken
+    }
+    if let stored = try secrets.value(for: key), !stored.isEmpty {
+      return stored
+    }
+    return try await oauth.accessToken(forceRefresh: forceRefresh)
+  }
 }
 
 private func resolve(
@@ -538,6 +577,7 @@ private func resolveOptional(
     return supplied
   }
   if let value = ProcessInfo.processInfo.environment[environment], !value.isEmpty {
+    try store.set(value, for: key)
     return value
   }
   if let value = try store.value(for: key), !value.isEmpty {
@@ -546,8 +586,7 @@ private func resolveOptional(
   return nil
 }
 
-private func prompt(_ label: String, allowed: Bool) throws -> String {
-  guard allowed else { throw ValidationError("Interactive Telegram authorization is required") }
+private func prompt(_ label: String) throws -> String {
   writeStatus(label, newline: false)
   guard let value = readLine(), !value.isEmpty else {
     throw ValidationError("A value is required")

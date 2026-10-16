@@ -166,8 +166,38 @@ struct AssistantOAuthTests {
       now: { now }
     )
 
-    await #expect(throws: OAuthError.self) {
-      try await provider.accessToken()
+    do {
+      _ = try await provider.accessToken()
+      Issue.record("Expected revoked Gmail token error")
+    } catch {
+      #expect(error.localizedDescription.contains("HTTP 400"))
+      #expect(error.localizedDescription.contains("Token expired or revoked")
+        == (ProcessInfo.processInfo.environment["ASSISTANTCTL_QUIET_GMAIL"] == nil))
+    }
+  }
+
+  @Test("Microsoft token errors follow the Microsoft build flag")
+  func microsoftTokenErrorBody() async throws {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let provider = OAuthAccessTokenProvider(
+      provider: .microsoft,
+      sessionStore: InMemoryOAuthSessionStore(
+        session: expiredSession(now: now, provider: .microsoft)
+      ),
+      httpClient: StubOAuthHTTPClient(
+        status: 400,
+        body: #"{"error":"invalid_grant","error_description":"provider-secret"}"#
+      ),
+      now: { now }
+    )
+
+    do {
+      _ = try await provider.accessToken()
+      Issue.record("Expected Microsoft token error")
+    } catch {
+      #expect(error.localizedDescription.contains("HTTP 400"))
+      #expect(error.localizedDescription.contains("provider-secret")
+        == (ProcessInfo.processInfo.environment["ASSISTANTCTL_QUIET_MICROSOFT"] == nil))
     }
   }
 
@@ -239,12 +269,17 @@ struct AssistantOAuthTests {
       )
     )
 
-    await #expect(throws: OAuthError.self) {
-      try await service.login(
+    do {
+      _ = try await service.login(
         provider: .microsoft,
         clientConfiguration: OAuthProviderClientConfiguration(clientId: "client"),
         configurationSource: .commandLine
       )
+      Issue.record("Expected Microsoft authorization denial")
+    } catch {
+      #expect(error.localizedDescription.contains("Authorization was denied"))
+      #expect(error.localizedDescription.contains("User cancelled")
+        == (ProcessInfo.processInfo.environment["ASSISTANTCTL_QUIET_MICROSOFT"] == nil))
     }
   }
 
@@ -283,6 +318,20 @@ struct AssistantOAuthTests {
 
     #expect(!output.contains("access-secret"))
     #expect(!output.contains("refresh-secret"))
+  }
+
+  @Test("Saved manual token reports a connection without OAuth refresh details")
+  func manualTokenStatus() {
+    let status = OAuthConnectionStatus(
+      provider: .gmail,
+      session: nil,
+      hasStoredAccessToken: true
+    )
+
+    #expect(status.connected)
+    #expect(status.expiresAt == nil)
+    #expect(!status.canRefresh)
+    #expect(status.configurationSource == nil)
   }
 
   private func configurationJSON(clientID: String) -> Data {

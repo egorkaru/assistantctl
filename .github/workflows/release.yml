@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install static build dependencies
-        run: brew install tdlib openssl@3
+        run: brew install --HEAD tdlib
       - name: Verify Swift toolchain
         run: swift --version
       - name: Run tests

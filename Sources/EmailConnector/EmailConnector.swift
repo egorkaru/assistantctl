@@ -127,6 +127,7 @@ public final class GmailMessageConnector: MessageConnector, Sendable {
   private func get<Response: Decodable>(_ url: URL) async throws -> Response {
     let data = try await authenticatedEmailData(
       from: url,
+      provider: .gmail,
       accessTokenProvider: accessTokenProvider,
       client: client
     )
@@ -281,6 +282,7 @@ public final class MicrosoftMailConnector: MessageConnector, Sendable {
   private func get<Response: Decodable>(_ url: URL) async throws -> Response {
     let data = try await authenticatedEmailData(
       from: url,
+      provider: .microsoft,
       accessTokenProvider: accessTokenProvider,
       client: client,
       preferTextBody: true
@@ -314,6 +316,7 @@ private struct MicrosoftPagePosition: Codable {
 
 private func authenticatedEmailData(
   from url: URL,
+  provider: OAuthProvider,
   accessTokenProvider: any AccessTokenProviding,
   client: any HTTPDataClient,
   preferTextBody: Bool = false
@@ -323,12 +326,13 @@ private func authenticatedEmailData(
     from: url, token: token, client: client, preferTextBody: preferTextBody
   )
   guard firstResponse.1.statusCode == 401 else {
-    return try validatedEmailData(firstResponse)
+    return try validatedEmailData(firstResponse, provider: provider)
   }
   let refreshedToken = try await accessTokenProvider.accessToken(forceRefresh: true)
   return try validatedEmailData(
     try await emailResponse(from: url, token: refreshedToken, client: client,
-                            preferTextBody: preferTextBody)
+                            preferTextBody: preferTextBody),
+    provider: provider
   )
 }
 
@@ -347,15 +351,35 @@ private func emailResponse(
   return try await client.data(for: request)
 }
 
-private func validatedEmailData(_ result: (Data, HTTPURLResponse)) throws -> Data {
+private func validatedEmailData(
+  _ result: (Data, HTTPURLResponse),
+  provider: OAuthProvider
+) throws -> Data {
   let (data, response) = result
   guard (200..<300).contains(response.statusCode) else {
     throw EmailConnectorError.requestFailed(
       status: response.statusCode,
-      body: String(decoding: data, as: UTF8.self)
+      body: providerErrorBody(data, provider: provider)
     )
   }
   return data
+}
+
+private func providerErrorBody(_ data: Data, provider: OAuthProvider) -> String {
+  switch provider {
+  case .gmail:
+    #if ASSISTANTCTL_QUIET_GMAIL
+    return "request failed"
+    #else
+    return String(decoding: data, as: UTF8.self)
+    #endif
+  case .microsoft:
+    #if ASSISTANTCTL_QUIET_MICROSOFT
+    return "request failed"
+    #else
+    return String(decoding: data, as: UTF8.self)
+    #endif
+  }
 }
 
 private struct GmailMessageList: Decodable {

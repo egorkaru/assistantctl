@@ -98,12 +98,16 @@ public struct OAuthConnectionStatus: Codable, Equatable, Sendable {
   public let canRefresh: Bool
   public let configurationSource: OAuthConfigurationSource?
 
-  public init(provider: OAuthProvider, session: OAuthTokenSet?) {
+  public init(
+    provider: OAuthProvider,
+    session: OAuthTokenSet?,
+    hasStoredAccessToken: Bool = false
+  ) {
     self.provider = provider
-    connected = session != nil
-    expiresAt = session?.expiresAt
-    canRefresh = session?.refreshToken?.isEmpty == false
-    configurationSource = session?.configurationSource
+    connected = session != nil || hasStoredAccessToken
+    expiresAt = hasStoredAccessToken ? nil : session?.expiresAt
+    canRefresh = !hasStoredAccessToken && session?.refreshToken?.isEmpty == false
+    configurationSource = hasStoredAccessToken ? nil : session?.configurationSource
   }
 }
 
